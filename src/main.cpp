@@ -7,8 +7,8 @@
 //   CC1101 SO   -> GPIO19   (PIN_MISO)   (a.k.a. MISO / GDO1)
 //   CC1101 SI   -> GPIO23   (PIN_MOSI)
 //   CC1101 CSN  -> GPIO27   (PIN_CSN)
-//   GDO0        -> GPIO4    (PIN_GDO0)   only for interrupt mode (USE_IRQ)
-//   GDO2        -> not used
+//   GDO0        -> GPIO26   (PIN_GDO0)   only for interrupt mode (USE_IRQ)
+//   GDO2        -> GPIO16   (PIN_GDO2)   (not used)
 //   + attach a 433 MHz antenna (~17.3 cm wire for a quarter wave) before transmitting!
 
 #include <Arduino.h>
@@ -21,8 +21,9 @@
 static constexpr int8_t PIN_SCK  = 18;
 static constexpr int8_t PIN_MISO = 19;
 static constexpr int8_t PIN_MOSI = 23;
-static constexpr int8_t PIN_CSN  = 5;
-static constexpr int8_t PIN_GDO0 = 4;      // CC1101 GDO0 -> GPIO4 (only needed for USE_IRQ)
+static constexpr int8_t PIN_CSN  = 27;
+static constexpr int8_t PIN_GDO0 = 26;     // CC1101 GDO0 -> GPIO4 (only needed for USE_IRQ)
+static constexpr int8_t PIN_GDO2 = 16;
 
 // Radio parameters
 static constexpr double   RF_FREQ_MHZ   = 433.92;   // carrier frequency
