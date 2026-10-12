@@ -28,7 +28,7 @@ namespace {
 
         ST_VERSION = 0x31, ST_MARCSTATE = 0x35, ST_TXBYTES = 0x3A, ST_RXBYTES = 0x3B,
 
-        MARC_IDLE = 0x01, MARC_RXFIFO_OVERFLOW = 0x11,
+        MARC_IDLE = 0x01, MARC_RX_END = 0x0E, MARC_RX_RST = 0x0F, MARC_RXFIFO_OVERFLOW = 0x11,
     };
 
     struct RegVal { uint8_t reg, val; };
@@ -49,7 +49,7 @@ namespace {
     //     MDMCFG2 [2:0] = sync mode: 011 = 30/32 sync bits (used here), 110 = 16/16 + carrier sense
     //     MDMCFG1 bit7  = hardware FEC (convolutional) - kept OFF since you do your own ECC
     const RegVal RADIO_CFG[] = {
-        {REG_IOCFG0,   0x06},   // GDO0: asserts on sync word, deasserts at end of packet (optional pin, not required)
+        {REG_IOCFG0,   0x06},   // GDO0: high from sync word to end of packet -> FALLING edge = packet done (RX or TX). Used by enableInterrupt(), harmless otherwise
         {REG_FIFOTHR,  0x07},
         {REG_PKTLEN,   CC1101::MAX_PAYLOAD},  // max accepted length in variable-length mode
         {REG_PKTCTRL1, 0x04},   // no HW address filter, append RSSI+LQI to RX FIFO
@@ -300,11 +300,19 @@ bool CC1101::send(const uint8_t* data, uint8_t len) {
 
     if (!ok) { goIdle(); strobe(CMD_SFTX); }   // CCA blocked / error: clean up
     startRx();
+    _pending = 0;                              // the TX-done edge is not an RX event
     return ok;
 }
 
 int16_t CC1101::receive(uint8_t* buf, uint8_t maxLen, RxInfo* info) {
+    if (_irq && !_pending) return 0;           // interrupt mode: nothing happened, no SPI traffic
+
     uint8_t marc = marcState();
+    if (_irq) {
+        // Edge arrived while the radio is still finishing the packet: keep the flag, retry next call
+        if (marc == MARC_RX_END || marc == MARC_RX_RST) return 0;
+        _pending = 0;                            // cleared BEFORE reading so a new edge is never lost
+    }
 
     if (marc == MARC_RXFIFO_OVERFLOW) { startRx(); return 0; }
     if (marc != MARC_IDLE) return 0;           // still in RX (or calibrating): nothing complete yet
@@ -337,4 +345,33 @@ int16_t CC1101::receive(uint8_t* buf, uint8_t maxLen, RxInfo* info) {
 
     startRx();
     return ret;
+}
+
+// ======================= Interrupt support ==================
+// Runs in interrupt context: only touches the flag and the optional user callback.
+void CC1101_ISR_ATTR CC1101::isrTrampoline(void* self) {
+    CC1101* c = static_cast<CC1101*>(self);
+    c->_pending = 1;
+    CC1101IsrFn cb = c->_userCb;
+    if (cb) cb(c->_userArg);
+}
+
+bool CC1101::enableInterrupt(CC1101IsrFn userCb, void* userArg) {
+    if (!_hal) return false;
+    _userCb  = userCb;
+    _userArg = userArg;
+    _pending = 1;                              // force one check so a packet that arrived early isn't missed
+    if (!_hal->irqAttach(&CC1101::isrTrampoline, this)) {
+        _userCb = nullptr; _userArg = nullptr; _pending = 0;
+        return false;
+    }
+    _irq = true;
+    return true;
+}
+
+void CC1101::disableInterrupt() {
+    if (!_hal) return;
+    _hal->irqDetach();
+    _irq = false;
+    _pending = 0;
 }

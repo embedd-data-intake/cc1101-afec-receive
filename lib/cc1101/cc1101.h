@@ -58,7 +58,19 @@ class CC1101 {
     // Non-blocking poll. Returns payload length (>0) if a packet arrived,
     // 0 if nothing yet, -1 if the packet didn't fit in maxLen (dropped).
     // The radio is parked in RX automatically between calls.
+    // With enableInterrupt() active this is SPI-free (just a flag check) until GDO0
+    // signals that something happened, so you can call it as often as you like.
     int16_t receive(uint8_t* buf, uint8_t maxLen, RxInfo* info = nullptr);
+
+    // ---- Interrupt mode (needs GDO0 wired + a HAL that implements irqAttach) ----
+    // Enables a falling-edge interrupt on GDO0 (= end of packet RX/TX). The ISR only sets a
+    // flag; all SPI work still happens in receive()/send() in your context.
+    // userCb (optional) is also called from the ISR so you can wake a task / set your own flag
+    // (it must be ISR-safe, and on ESP32 should be IRAM_ATTR).
+    // Returns false (and keeps polling) if the HAL can't do interrupts.
+    bool enableInterrupt(CC1101IsrFn userCb = nullptr, void* userArg = nullptr);
+    void disableInterrupt();
+    bool packetPending() const { return _pending != 0; }   // flag set by the ISR, no SPI
 
     uint8_t version();                      // chip VERSION register (typ. 0x14 / 0x04)
 
@@ -79,7 +91,14 @@ class CC1101 {
     void    select();
     void    deselect();
 
-    CC1101Hal* _hal = nullptr;
-    Config     _cfg;
-    bool       _rx  = false;
+    static void isrTrampoline(void* self);
+
+    CC1101Hal*       _hal = nullptr;
+    Config           _cfg;
+    bool             _rx  = false;
+
+    bool             _irq = false;        // interrupt mode active
+    volatile uint8_t _pending = 0;        // set by ISR (GDO0 falling edge), cleared in receive()
+    CC1101IsrFn      _userCb  = nullptr;
+    void*            _userArg = nullptr;
 };
