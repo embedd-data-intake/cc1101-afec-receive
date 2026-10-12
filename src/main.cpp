@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "cc1101.h"
+#include "hal/cc1101_arduino_hal.h"   // swap for your own HAL on other frameworks
 
 // ===================== USER CONFIG =====================
 // Pins (change for your board; on S3/C3 pick free GPIOs)
@@ -23,14 +24,11 @@ static constexpr int8_t PIN_CSN  = 27;
 
 // Radio parameters
 static constexpr double   RF_FREQ_MHZ   = 433.92;   // carrier frequency
-static constexpr uint16_t RF_SYNC_WORD  = 0x6B1D;   // your "network ID" - must match on all nodes
+static constexpr uint16_t RF_SYNC_WORD  = 0x6B1D;   // "network ID" - must match on all nodes
 static constexpr int8_t   RF_TX_DBM     = 0;        // -30,-20,-15,-10,0,5,7,10
 
-// Demo behaviour
-static constexpr bool     TX_ENABLED     = false;    // false = receive-only node
-static constexpr uint32_t TX_INTERVAL_MS = 2000;
-// =======================================================
-
+// HAL = the only platform-specific part. Optional 6th arg: SPI clock in Hz (default 4 MHz).
+CC1101HalArduino hal(SPI, PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CSN);
 CC1101 radio;
 static uint32_t counter = 0;
 static uint32_t lastTx  = 0;
@@ -46,7 +44,7 @@ void setup() {
     cfg.whitening  = true;     // keep identical on both ends
     cfg.hwCrc      = false;    // true = radio drops corrupted packets
 
-    if (!radio.begin(SPI, PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CSN, cfg)) {
+    if (!radio.begin(hal, cfg)) {
         Serial.println("CC1101 not found - check wiring/power");
         while (true) delay(1000);
     }
@@ -54,7 +52,6 @@ void setup() {
 }
 
 void loop() {
-    // ---- RX ----
     uint8_t buf[CC1101::MAX_PAYLOAD];
     CC1101::RxInfo info;
     int16_t n = radio.receive(buf, sizeof(buf), &info);
@@ -65,15 +62,6 @@ void loop() {
         for (int i = 0; i < n; i++) Serial.print((buf[i] >= 32 && buf[i] < 127) ? (char)buf[i] : '.');
         Serial.println();
     }
-
-    // ---- TX ----
-    // if (TX_ENABLED && millis() - lastTx >= TX_INTERVAL_MS) {
-    //     lastTx = millis();
-    //     char msg[32];
-    //     int len = snprintf(msg, sizeof(msg), "hello #%lu", (unsigned long)counter++);
-    //     bool ok = radio.send((const uint8_t*)msg, (uint8_t)len);   // <-- your own packet bytes go here
-    //     Serial.printf("TX %s: %s\n", ok ? "ok" : "FAILED", msg);
-    // }
 
     delay(1);
 }

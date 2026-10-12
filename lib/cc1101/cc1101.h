@@ -1,8 +1,10 @@
 #pragma once
 // Minimal bare-register CC1101 driver (no 3rd-party radio libs).
-// Uses only the Arduino core SPI library.
-#include <Arduino.h>
-#include <SPI.h>
+// Platform independent: all hardware access goes through CC1101Hal (see cc1101_hal.h).
+// For Arduino use hal/cc1101_hal_arduino.h.
+#include <stdint.h>
+#include <stddef.h>
+#include "cc1101_hal.h"
 
 class CC1101 {
     public:
@@ -43,43 +45,41 @@ class CC1101 {
         bool    crcOk;    // only meaningful when Config::hwCrc == true
     };
 
-    // Pass your SPI instance and pins. Returns false if the chip doesn't answer
-    // (wiring / power problem).
-    bool begin(SPIClass& spi, int8_t sck, int8_t miso, int8_t mosi, int8_t csn,
-        const Config& cfg);
+    // Pass your HAL instance (must outlive this object). Calls hal.init().
+    // Returns false if the chip doesn't answer (wiring / power problem).
+    bool begin(CC1101Hal& hal, const Config& cfg);
 
-        bool setFrequency(double mhz);          // can be changed at runtime
-        void setSyncWord(uint16_t sw);          // can be changed at runtime
+    bool setFrequency(double mhz);          // can be changed at runtime
+    void setSyncWord(uint16_t sw);          // can be changed at runtime
 
-        // Blocking send (returns when the packet is out). 1..MAX_PAYLOAD bytes.
-        bool send(const uint8_t* data, uint8_t len);
+    // Blocking send (returns when the packet is out). 1..MAX_PAYLOAD bytes.
+    bool send(const uint8_t* data, uint8_t len);
 
-        // Non-blocking poll. Returns payload length (>0) if a packet arrived,
-        // 0 if nothing yet, -1 if the packet didn't fit in maxLen (dropped).
-        // The radio is parked in RX automatically between calls.
-        int16_t receive(uint8_t* buf, uint8_t maxLen, RxInfo* info = nullptr);
+    // Non-blocking poll. Returns payload length (>0) if a packet arrived,
+    // 0 if nothing yet, -1 if the packet didn't fit in maxLen (dropped).
+    // The radio is parked in RX automatically between calls.
+    int16_t receive(uint8_t* buf, uint8_t maxLen, RxInfo* info = nullptr);
 
-        uint8_t version();                      // chip VERSION register (typ. 0x14 / 0x04)
+    uint8_t version();                      // chip VERSION register (typ. 0x14 / 0x04)
 
-        private:
-        void    reset();
-        void    applyConfig();
-        void    startRx();
-        bool    goIdle();
-        uint8_t marcState();
-        uint8_t rxBytes();
+    private:
+    void    reset();
+    void    applyConfig();
+    void    startRx();
+    bool    goIdle();
+    uint8_t marcState();
+    uint8_t rxBytes();
 
-        uint8_t strobe(uint8_t cmd);
-        void    writeReg(uint8_t reg, uint8_t val);
-        uint8_t readReg(uint8_t reg);
-        uint8_t readStatus(uint8_t reg);
-        void    writeBurst(uint8_t reg, const uint8_t* d, uint8_t n);
-        void    readBurst(uint8_t reg, uint8_t* d, uint8_t n);
-        void    select();
-        void    deselect();
+    uint8_t strobe(uint8_t cmd);
+    void    writeReg(uint8_t reg, uint8_t val);
+    uint8_t readReg(uint8_t reg);
+    uint8_t readStatus(uint8_t reg);
+    void    writeBurst(uint8_t reg, const uint8_t* d, uint8_t n);
+    void    readBurst(uint8_t reg, uint8_t* d, uint8_t n);
+    void    select();
+    void    deselect();
 
-        SPIClass* _spi  = nullptr;
-        int8_t    _miso = -1, _csn = -1;
-        Config    _cfg;
-        bool      _rx   = false;
-    };
+    CC1101Hal* _hal = nullptr;
+    Config     _cfg;
+    bool       _rx  = false;
+};

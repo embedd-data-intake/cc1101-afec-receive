@@ -1,7 +1,5 @@
 #include "cc1101.h"
-
-// ======================= SPI settings =======================
-static constexpr uint32_t SPI_HZ = 4000000;      // CC1101 max 10 MHz (6.5 MHz burst); 4 MHz is safe on jumper wires
+#include <string.h>
 
 // ======================= Timeouts ===========================
 // Max time to wait for a TX to finish. Airtime of 62 bytes @ 4.8 kBaud ~ 150 ms.
@@ -102,69 +100,69 @@ namespace {
 
 // ======================= Low-level SPI ======================
 void CC1101::select() {
-    digitalWrite(_csn, LOW);
+    _hal->csWrite(false);
     // CC1101 pulls MISO low when its crystal is ready
-    uint32_t t = micros();
-    while (digitalRead(_miso) && (micros() - t) < 2000) {}
+    uint32_t t = _hal->nowUs();
+    while (_hal->misoRead() && (_hal->nowUs() - t) < 2000) {}
 }
-void CC1101::deselect() { digitalWrite(_csn, HIGH); }
+void CC1101::deselect() { _hal->csWrite(true); }
 
 uint8_t CC1101::strobe(uint8_t cmd) {
-    _spi->beginTransaction(SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0));
+    _hal->spiBegin();
     select();
-    uint8_t st = _spi->transfer(cmd);
+    uint8_t st = _hal->spiTransfer(cmd);
     deselect();
-    _spi->endTransaction();
+    _hal->spiEnd();
     return st;
 }
 
 void CC1101::writeReg(uint8_t reg, uint8_t val) {
-    _spi->beginTransaction(SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0));
+    _hal->spiBegin();
     select();
-    _spi->transfer(reg);
-    _spi->transfer(val);
+    _hal->spiTransfer(reg);
+    _hal->spiTransfer(val);
     deselect();
-    _spi->endTransaction();
+    _hal->spiEnd();
 }
 
 uint8_t CC1101::readReg(uint8_t reg) {
-    _spi->beginTransaction(SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0));
+    _hal->spiBegin();
     select();
-    _spi->transfer(reg | HDR_READ);
-    uint8_t v = _spi->transfer(0);
+    _hal->spiTransfer(reg | HDR_READ);
+    uint8_t v = _hal->spiTransfer(0);
     deselect();
-    _spi->endTransaction();
+    _hal->spiEnd();
     return v;
 }
 
 // Status registers (0x30..0x3D) need the burst bit set when reading,
 // otherwise they are interpreted as command strobes.
 uint8_t CC1101::readStatus(uint8_t reg) {
-    _spi->beginTransaction(SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0));
+    _hal->spiBegin();
     select();
-    _spi->transfer(reg | HDR_READ | HDR_BURST);
-    uint8_t v = _spi->transfer(0);
+    _hal->spiTransfer(reg | HDR_READ | HDR_BURST);
+    uint8_t v = _hal->spiTransfer(0);
     deselect();
-    _spi->endTransaction();
+    _hal->spiEnd();
     return v;
 }
 
 void CC1101::writeBurst(uint8_t reg, const uint8_t* d, uint8_t n) {
-    _spi->beginTransaction(SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0));
+    _hal->spiBegin();
     select();
-    _spi->transfer(reg | HDR_BURST);
-    for (uint8_t i = 0; i < n; i++) _spi->transfer(d[i]);
+    _hal->spiTransfer(reg | HDR_BURST);
+    for (uint8_t i = 0; i < n; i++) _hal->spiTransfer(d[i]);
     deselect();
-    _spi->endTransaction();
+    _hal->spiEnd();
 }
 
 void CC1101::readBurst(uint8_t reg, uint8_t* d, uint8_t n) {
-    _spi->beginTransaction(SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0));
+    _hal->spiBegin();
     select();
-    _spi->transfer(reg | HDR_READ | HDR_BURST);
-    for (uint8_t i = 0; i < n; i++) d[i] = _spi->transfer(0);
+    _hal->spiTransfer(reg | HDR_READ | HDR_BURST);
+    for (uint8_t i = 0; i < n; i++) d[i] = _hal->spiTransfer(0);
     deselect();
-    _spi->endTransaction();
+    _hal->spiEnd();
 }
 
 // ======================= State helpers ======================
@@ -172,9 +170,9 @@ uint8_t CC1101::marcState() { return readStatus(ST_MARCSTATE) & 0x1F; }
 
 bool CC1101::goIdle() {
     strobe(CMD_SIDLE);
-    uint32_t t = millis();
+    uint32_t t = _hal->nowMs();
     while (marcState() != MARC_IDLE) {
-        if (millis() - t > 20) return false;
+        if (_hal->nowMs() - t > 20) return false;
     }
     return true;
 }
@@ -195,26 +193,26 @@ void CC1101::startRx() {
     goIdle();
     strobe(CMD_SFRX);
     strobe(CMD_SRX);
-    uint32_t t = millis();
-    while (marcState() == MARC_IDLE && millis() - t < 5) {}   // wait until it left IDLE
+    uint32_t t = _hal->nowMs();
+    while (marcState() == MARC_IDLE && _hal->nowMs() - t < 5) {}   // wait until it left IDLE
     _rx = true;
 }
 
 // ======================= Public API =========================
 void CC1101::reset() {
     // Power-on reset sequence from the datasheet
-    digitalWrite(_csn, HIGH); delayMicroseconds(5);
-    digitalWrite(_csn, LOW);  delayMicroseconds(10);
-    digitalWrite(_csn, HIGH); delayMicroseconds(45);
+    _hal->csWrite(true); _hal->delayUs(5);
+    _hal->csWrite(false);  _hal->delayUs(10);
+    _hal->csWrite(true); _hal->delayUs(45);
 
-    _spi->beginTransaction(SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0));
+    _hal->spiBegin();
     select();
-    _spi->transfer(CMD_SRES);
-    uint32_t t = micros();
-    while (digitalRead(_miso) && (micros() - t) < 5000) {}    // wait for reset to complete
+    _hal->spiTransfer(CMD_SRES);
+    uint32_t t = _hal->nowUs();
+    while (_hal->misoRead() && (_hal->nowUs() - t) < 5000) {}    // wait for reset to complete
     deselect();
-    _spi->endTransaction();
-    delay(1);
+    _hal->spiEnd();
+    _hal->delayMs(1);
 }
 
 uint8_t CC1101::version() { return readStatus(ST_VERSION); }
@@ -233,113 +231,110 @@ void CC1101::applyConfig() {
     writeReg(REG_SYNC0, _cfg.syncWord & 0xFF);
 }
 
-bool CC1101::begin(SPIClass& spi, int8_t sck, int8_t miso, int8_t mosi, int8_t csn,
-    const Config& cfg) {
-        _spi = &spi; _miso = miso; _csn = csn; _cfg = cfg;
+bool CC1101::begin(CC1101Hal& hal, const Config& cfg) {
+    _hal = &hal; _cfg = cfg; _rx = false;
 
-        pinMode(_csn, OUTPUT);
-        digitalWrite(_csn, HIGH);
-        _spi->begin(sck, miso, mosi, -1);       // CS is driven manually
-        pinMode(_miso, INPUT);
+    if (!_hal->init()) return false;
+    _hal->csWrite(true);
 
-        reset();
+    reset();
 
-        uint8_t v = version();
-        if (v == 0x00 || v == 0xFF) return false;   // no chip / wiring problem
+    uint8_t v = version();
+    if (v == 0x00 || v == 0xFF) return false;   // no chip / wiring problem
 
-        goIdle();
-        applyConfig();
-        if (!setFrequency(_cfg.freqMHz)) return false;
-        startRx();
-        return true;
+    goIdle();
+    applyConfig();
+    if (!setFrequency(_cfg.freqMHz)) return false;
+    startRx();
+    return true;
+}
+
+bool CC1101::setFrequency(double mhz) {
+    // Module is a 433 band part; this register set is tuned for 387..464 MHz.
+    // (For 868/915 MHz you'd need other FSCAL/TEST values and a different matching network.)
+    if (mhz < 387.0 || mhz > 464.0) return false;
+
+    // FREQ = f_carrier * 2^16 / f_xosc   (f_xosc = 26 MHz)
+    uint32_t w = (uint32_t)(mhz * 65536.0 / 26.0 + 0.5);
+
+    bool wasRx = _rx;
+    goIdle();
+    writeReg(REG_FREQ2, (w >> 16) & 0xFF);
+    writeReg(REG_FREQ1, (w >> 8) & 0xFF);
+    writeReg(REG_FREQ0, w & 0xFF);
+    _cfg.freqMHz = mhz;
+    if (wasRx) startRx();                      // auto-calibration happens on IDLE->RX
+    return true;
+}
+
+void CC1101::setSyncWord(uint16_t sw) {
+    bool wasRx = _rx;
+    goIdle();
+    _cfg.syncWord = sw;
+    writeReg(REG_SYNC1, sw >> 8);
+    writeReg(REG_SYNC0, sw & 0xFF);
+    if (wasRx) startRx();
+}
+
+bool CC1101::send(const uint8_t* data, uint8_t len) {
+    if (len == 0 || len > MAX_PAYLOAD) return false;
+
+    goIdle();
+    strobe(CMD_SFTX);
+
+    uint8_t frame[MAX_PAYLOAD + 1];
+    frame[0] = len;                            // length byte, consumed by the radio (variable length mode)
+    memcpy(frame + 1, data, len);
+    writeBurst(REG_FIFO, frame, len + 1);
+
+    strobe(CMD_STX);
+
+    bool ok = false;
+    uint32_t t = _hal->nowMs();
+    while (_hal->nowMs() - t < TX_TIMEOUT_MS) {
+        uint8_t tx = readStatus(ST_TXBYTES);
+        if (tx & 0x80) break;                                    // TX FIFO underflow
+        if ((tx & 0x7F) == 0 && marcState() == MARC_IDLE) { ok = true; break; }
+        _hal->delayMs(1);
     }
 
-    bool CC1101::setFrequency(double mhz) {
-        // Module is a 433 band part; this register set is tuned for 387..464 MHz.
-        // (For 868/915 MHz you'd need other FSCAL/TEST values and a different matching network.)
-        if (mhz < 387.0 || mhz > 464.0) return false;
+    if (!ok) { goIdle(); strobe(CMD_SFTX); }   // CCA blocked / error: clean up
+    startRx();
+    return ok;
+}
 
-        // FREQ = f_carrier * 2^16 / f_xosc   (f_xosc = 26 MHz)
-        uint32_t w = (uint32_t)(mhz * 65536.0 / 26.0 + 0.5);
+int16_t CC1101::receive(uint8_t* buf, uint8_t maxLen, RxInfo* info) {
+    uint8_t marc = marcState();
 
-        bool wasRx = _rx;
-        goIdle();
-        writeReg(REG_FREQ2, (w >> 16) & 0xFF);
-        writeReg(REG_FREQ1, (w >> 8) & 0xFF);
-        writeReg(REG_FREQ0, w & 0xFF);
-        _cfg.freqMHz = mhz;
-        if (wasRx) startRx();                      // auto-calibration happens on IDLE->RX
-        return true;
-    }
+    if (marc == MARC_RXFIFO_OVERFLOW) { startRx(); return 0; }
+    if (marc != MARC_IDLE) return 0;           // still in RX (or calibrating): nothing complete yet
 
-    void CC1101::setSyncWord(uint16_t sw) {
-        bool wasRx = _rx;
-        goIdle();
-        _cfg.syncWord = sw;
-        writeReg(REG_SYNC1, sw >> 8);
-        writeReg(REG_SYNC0, sw & 0xFF);
-        if (wasRx) startRx();
-    }
+    // IDLE while we expect RX => either a packet finished (RXOFF_MODE=IDLE) or we lost RX
+    uint8_t n = rxBytes();
+    if (n == 0 || (n & 0x80)) { startRx(); return 0; }
 
-    bool CC1101::send(const uint8_t* data, uint8_t len) {
-        if (len == 0 || len > MAX_PAYLOAD) return false;
+    uint8_t raw[64];
+    if (n > sizeof(raw)) n = sizeof(raw);
+    readBurst(REG_FIFO, raw, n);
 
-        goIdle();
-        strobe(CMD_SFTX);
-
-        uint8_t frame[MAX_PAYLOAD + 1];
-        frame[0] = len;                            // length byte, consumed by the radio (variable length mode)
-        memcpy(frame + 1, data, len);
-        writeBurst(REG_FIFO, frame, len + 1);
-
-        strobe(CMD_STX);
-
-        bool ok = false;
-        uint32_t t = millis();
-        while (millis() - t < TX_TIMEOUT_MS) {
-            uint8_t tx = readStatus(ST_TXBYTES);
-            if (tx & 0x80) break;                                    // TX FIFO underflow
-            if ((tx & 0x7F) == 0 && marcState() == MARC_IDLE) { ok = true; break; }
-            delay(1);
+    uint8_t len = raw[0];
+    int16_t ret;
+    if (len == 0 || (uint16_t)len + 3 > n) {            // malformed (needs len byte + payload + 2 status)
+        ret = 0;
+    } else if (len > maxLen) {
+        ret = -1;
+    } else {
+        memcpy(buf, raw + 1, len);
+        if (info) {
+            uint8_t rssiRaw = raw[len + 1], lqiCrc = raw[len + 2];
+            int16_t r = (rssiRaw >= 128) ? ((int16_t)rssiRaw - 256) : (int16_t)rssiRaw;
+            info->rssiDbm = (r / 2) - 74;                    // RSSI offset ~74 dB at 433 MHz
+            info->lqi     = lqiCrc & 0x7F;
+            info->crcOk   = (lqiCrc & 0x80) != 0;
         }
-
-        if (!ok) { goIdle(); strobe(CMD_SFTX); }   // CCA blocked / error: clean up
-        startRx();
-        return ok;
+        ret = len;
     }
 
-    int16_t CC1101::receive(uint8_t* buf, uint8_t maxLen, RxInfo* info) {
-        uint8_t marc = marcState();
-
-        if (marc == MARC_RXFIFO_OVERFLOW) { startRx(); return 0; }
-        if (marc != MARC_IDLE) return 0;           // still in RX (or calibrating): nothing complete yet
-
-        // IDLE while we expect RX => either a packet finished (RXOFF_MODE=IDLE) or we lost RX
-        uint8_t n = rxBytes();
-        if (n == 0 || (n & 0x80)) { startRx(); return 0; }
-
-        uint8_t raw[64];
-        if (n > sizeof(raw)) n = sizeof(raw);
-        readBurst(REG_FIFO, raw, n);
-
-        uint8_t len = raw[0];
-        int16_t ret;
-        if (len == 0 || (uint16_t)len + 3 > n) {            // malformed (needs len byte + payload + 2 status)
-            ret = 0;
-        } else if (len > maxLen) {
-            ret = -1;
-        } else {
-            memcpy(buf, raw + 1, len);
-            if (info) {
-                uint8_t rssiRaw = raw[len + 1], lqiCrc = raw[len + 2];
-                int16_t r = (rssiRaw >= 128) ? ((int16_t)rssiRaw - 256) : (int16_t)rssiRaw;
-                info->rssiDbm = (r / 2) - 74;                    // RSSI offset ~74 dB at 433 MHz
-                info->lqi     = lqiCrc & 0x7F;
-                info->crcOk   = (lqiCrc & 0x80) != 0;
-            }
-            ret = len;
-        }
-
-        startRx();
-        return ret;
-    }
+    startRx();
+    return ret;
+}
