@@ -24,19 +24,22 @@ bool h84dec(uint8_t b, uint8_t* n) {
 }
 } // namespace
 
+uint8_t parityBytesOf(uint8_t level) { return level == LEVEL_NONE ? 0 : levelInfo(level).parityBytes; }
+
 uint8_t maxPayload(uint8_t level) {
-    return AIR_MAX - OUTER_LEN - levelInfo(level).parityBytes - INNER_OVERHEAD;
+    return AIR_MAX - OUTER_LEN - parityBytesOf(level) - INNER_OVERHEAD;
 }
 
 uint8_t fitLevel(uint8_t level, uint8_t plen) {
+    if (level == LEVEL_NONE) return level;
     if (level > MAX_LEVEL) level = MAX_LEVEL;
     while (level > 0 && plen > maxPayload(level)) level--;
     return level;
 }
 
 bool encodeFrame(const Frame& f, uint8_t level, uint8_t* out, uint8_t* outLen) {
-    if (level > MAX_LEVEL || f.plen > maxPayload(level)) return false;
-    const uint8_t pb = levelInfo(level).parityBytes;
+    if ((level > MAX_LEVEL && level != LEVEL_NONE) || f.plen > maxPayload(level)) return false;
+    const uint8_t pb = parityBytesOf(level);
     const uint8_t L  = INNER_OVERHEAD + f.plen;
 
     uint8_t info = 0xA0 | level;
@@ -51,26 +54,26 @@ bool encodeFrame(const Frame& f, uint8_t level, uint8_t* out, uint8_t* outLen) {
     uint16_t c = crc16(in, INNER_HDR + f.plen);
     in[L - 2] = c & 0xFF; in[L - 1] = c >> 8;
 
-    if (!eccEncode(level, in, L, in + L)) return false;
+    if (level != LEVEL_NONE && !eccEncode(level, in, L, in + L)) return false;
     *outLen = OUTER_LEN + L + pb;
     return true;
 }
 
 DecodeStatus decodeFrame(const uint8_t* in, uint8_t len, Frame& f, DecodeInfo& info) {
-    if (len < OUTER_LEN + 2 + INNER_OVERHEAD) return DecodeStatus::TOO_SHORT;
+    if (len < OUTER_LEN + INNER_OVERHEAD) return DecodeStatus::TOO_SHORT;
     uint8_t lo, hi;
     if (!h84dec(in[0], &lo) || !h84dec(in[1], &hi)) return DecodeStatus::BAD_HEADER;
-    if (hi != 0x0A || lo >= NUM_LEVELS)             return DecodeStatus::BAD_HEADER;
+    if (hi != 0x0A || (lo >= NUM_LEVELS && lo != LEVEL_NONE)) return DecodeStatus::BAD_HEADER;
 
-    info.level = lo; info.corrected = 0; info.t = levelInfo(lo).t;
-    const uint8_t pb = levelInfo(lo).parityBytes;
+    info.level = lo; info.corrected = 0; info.t = (lo == LEVEL_NONE) ? 0 : levelInfo(lo).t;
+    const uint8_t pb = parityBytesOf(lo);
     if (len < OUTER_LEN + pb + INNER_OVERHEAD) return DecodeStatus::TOO_SHORT;
     const uint8_t L = len - OUTER_LEN - pb;
 
     uint8_t buf[AIR_MAX];
     memcpy(buf, in + OUTER_LEN, L);
     uint8_t corr = 0;
-    if (!eccDecode(lo, buf, L, in + OUTER_LEN + L, &corr)) { info.corrected = info.t; return DecodeStatus::ECC_FAIL; }
+    if (lo != LEVEL_NONE && !eccDecode(lo, buf, L, in + OUTER_LEN + L, &corr)) { info.corrected = info.t; return DecodeStatus::ECC_FAIL; }
     info.corrected = corr;
 
     uint16_t c = crc16(buf, L - 2);
