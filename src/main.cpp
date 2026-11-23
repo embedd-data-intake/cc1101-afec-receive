@@ -1,20 +1,17 @@
 #include <Arduino.h>
 #include <SPI.h>
 
-#include "cc1101.h"
-#include "hal/cc1101_hal_arduino.h"
-#include "afec_node.h"
-#include "afec_platform_arduino.h"
+#include <cc1101.h>
+#include <hal/cc1101_hal_arduino.h>
+#include <afec_node.h>
 
+#include "afec_platform_arduino.h"
 #include "config.h"
 
 CC1101HalArduino hal(SPI, PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CSN, 4000000, PIN_GDO0);
 CC1101 radio;
 
 afec::Node node;
-
-static uint32_t counter = 0;
-static uint32_t lastTx  = 0;
 
 void setup() {
     Serial.begin(115200);
