@@ -13,6 +13,15 @@ CC1101 radio;
 
 afec::Node node;
 
+void debugPrint(const char *format, ...) {
+    char buf[192];
+    va_list ap;
+    va_start(ap, format);
+    int n = vsnprintf(buf, sizeof buf, format, ap);
+    va_end(ap);
+    Serial.write((const uint8_t*)buf, n < (int)sizeof buf ? n : sizeof buf - 1);
+}
+
 void setup() {
     Serial.begin(115200);
     delay(500);
@@ -25,6 +34,8 @@ void setup() {
     cfg.hwCrc      = false;
 
     afec::NodeConfig nc; nc.id = NODE_ID; nc.bitrateBps = 4800;
+
+    node.printDebug = debugPrint;
 
     if (!radio.begin(hal, cfg)) {
         Serial.println("CC1101 not found - check wiring/power");
