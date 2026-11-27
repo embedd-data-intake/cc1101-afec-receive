@@ -176,12 +176,14 @@ inline const char* modeName(afec::Mode m) {
 }
 
 // cfg mode=<1..5> init=<0..5> retries=<n> ackto=<ms> tx=<dBm> dg=<n> nackstep=<n>
-//     rssi_min=<dBm> rssi_max=<dBm> rssi_up=<a,b,c,d,e> hys=<n>
+//     rssi_min=<dBm> rssi_max=<dBm> rssi_up=<a,b,c,d,e> hys=<n> pin=<0..5>
 // Absent keys keep their current value, so the C4 policy can be set once and stays frozen.
+// Except `pin` (P3 pinned-level sweep, C4/C5 only): it applies to this cfg only, and a cfg without
+// it unpins, so a pinned block can never leak into the next one.
 // All-or-nothing: on any error `nc` and `txDbm` are left unchanged.
 inline bool parseCfg(const Args& a, afec::NodeConfig& nc, int8_t& txDbm) {
     static const char* const keys[] = { "mode", "init", "retries", "ackto", "tx", "dg", "nackstep",
-                                        "rssi_min", "rssi_max", "rssi_up", "hys", nullptr };
+                                        "rssi_min", "rssi_max", "rssi_up", "hys", "pin", nullptr };
     if (!a.only(keys)) return false;
     afec::NodeConfig c = nc;
     int8_t tx = txDbm;
@@ -199,6 +201,9 @@ inline bool parseCfg(const Args& a, afec::NodeConfig& nc, int8_t& txDbm) {
     if (!a.num("rssi_max", -140, 0, c.rssi.maxDbm)) return false;
     if (!a.num("hys", 0, 15, c.rssi.hys)) return false;
     if (c.rssi.minDbm >= c.rssi.maxDbm) return fail(a.name, "bad value", "rssi_min must be < rssi_max");
+    c.pinLevel = afec::PIN_NONE;
+    if (!a.num("pin", 0, afec::MAX_LEVEL, c.pinLevel)) return false;
+    if (c.pinLevel != afec::PIN_NONE && mode != 4 && mode != 5) return fail(a.name, "bad value", "pin needs mode 4 or 5");
     if (const char* up = a.get("rssi_up")) {
         uint8_t v[afec::MAX_LEVEL];
         const char* p = up;
@@ -221,10 +226,10 @@ inline bool parseCfg(const Args& a, afec::NodeConfig& nc, int8_t& txDbm) {
 inline void printCfg(const afec::NodeConfig& c, int8_t txDbm) {
     ev('I', "cfg_ok",
        ",\"cfg\":\"%s\",\"mode\":%u,\"init_lvl\":%u,\"retries\":%u,\"ack_to_ms\":%u,\"tx_dbm\":%d,"
-       "\"dg\":%u,\"nack_step\":%u,\"rssi_min\":%d,\"rssi_max\":%d,\"rssi_up\":\"%u,%u,%u,%u,%u\",\"hys\":%u",
+       "\"dg\":%u,\"nack_step\":%u,\"rssi_min\":%d,\"rssi_max\":%d,\"rssi_up\":\"%u,%u,%u,%u,%u\",\"hys\":%u,\"pin\":%u",
        modeName(c.mode), (unsigned)c.mode, c.initialLevel, c.maxRetries, (unsigned)c.ackTimeoutMs, txDbm,
        c.downgradeAfter, c.nackStep, c.rssi.minDbm, c.rssi.maxDbm,
-       c.rssi.up[0], c.rssi.up[1], c.rssi.up[2], c.rssi.up[3], c.rssi.up[4], c.rssi.hys);
+       c.rssi.up[0], c.rssi.up[1], c.rssi.up[2], c.rssi.up[3], c.rssi.up[4], c.rssi.hys, c.pinLevel);
 }
 
 inline void printStats(const afec::Stats& s) {
