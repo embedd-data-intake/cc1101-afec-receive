@@ -59,6 +59,7 @@ There is no `run`, `stop` or `bench` here.
 
 ## Serial output
 
+- **Serial TX buffer: 8 KB** (`Serial.setTxBufferSize(8192)` before `begin()`). With the default buffer every log line blocked ~15 ms on the UART, which inflated RTT unevenly across configurations (2026-11-27 hardware test: C5 109 ms vs C2 53 ms; with the buffer 37 vs 34 ms, the gap being the ACK airtime). DBG logging averages about 1 KB/s, well under the UART's 11.5 KB/s.
 - JSON Lines from the library and the firmware. Filter on lines starting with `{`. The library schema is in `cc1101-afec/docs/afec_log_schema.md`.
 - Plain text: the boot lines only. (The hex/ASCII payload dump was replaced by `app_rx`.)
 - `debugPrint` uses the same 192 B buffer as the sender. The longest observed library line is 175 chars (`rx`/`lvl_step`).

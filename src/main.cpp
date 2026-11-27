@@ -76,6 +76,9 @@ static void handle(char* line) {
 }
 
 void setup() {
+    // Large TX ring buffer: DBG logging (~1 KB/s) must not block the protocol. With the default
+    // buffer every log line waits ~15 ms for the UART, which inflates RTT unevenly across configs.
+    Serial.setTxBufferSize(8192);    // must precede begin()
     Serial.begin(115200);
     delay(500);
     cmd::nodeId() = NODE_ID;
