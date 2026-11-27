@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SPI.h>
+#include <esp_system.h>
 
 #include <cc1101.h>
 #include <hal/cc1101_hal_arduino.h>
@@ -106,6 +107,8 @@ void setup() {
 
     node.begin(radio, ncfg, afec::arduinoPlatform());
     node.onData(onData);
+    // First event after a (re)boot; campaign.py counts it when there is no serial line to watch.
+    cmd::ev('I', "boot", ",\"reason\":%u", (unsigned)esp_reset_reason());
     cmd::ev('I', "hello", ",\"role\":\"receiver\",\"peer\":%u,\"build\":\"%s %s\",\"sink\":\"%s\"", PEER_NODE_ID, __DATE__, __TIME__, logsink::name());
     cmd::printCfg(ncfg, rcfg.txPowerDbm);
 }
@@ -113,4 +116,5 @@ void setup() {
 void loop() {
     node.poll();
     if (char* line = lines.poll()) handle(line);
+    if (char* line = cmd::pollRemote()) handle(line);      // afec/cmd/<tx|rx>, MQTT builds only
 }

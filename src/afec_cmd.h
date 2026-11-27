@@ -74,6 +74,46 @@ private:
     bool _overflow = false;
 };
 
+// ------------------------------------------------------------------ commands over MQTT
+// Removes a trailing-style ` id=<n>` token from `line` in place. true if one was found.
+inline bool takeId(char* line, uint32_t& id) {
+    for (char* p = line; (p = strstr(p, "id=")) != nullptr; p += 3) {
+        if (p == line || (p[-1] != ' ' && p[-1] != '\t')) continue;      // part of another key
+        char* end = nullptr;
+        const unsigned long v = strtoul(p + 3, &end, 10);
+        if (end == p + 3 || (*end && *end != ' ' && *end != '\t')) return false;
+        id = (uint32_t)v;
+        memmove(p - 1, end, strlen(end) + 1);
+        return true;
+    }
+    return false;
+}
+
+// Next command from afec/cmd/<role> (MQTT builds), or nullptr. Logs `cmd_rx` (id, cmd) for every
+// command it hands out. A command whose `id=` was among the last 8 is a QoS 1 redelivery: it is
+// logged as `cmd_dup` and not run again (a second `cfg` would re-initialise the radio).
+inline char* pollRemote() {
+    char* line = logsink::popCommand();
+    if (!line) return nullptr;
+    static uint32_t seen[8]; static uint8_t nSeen = 0, next = 0;
+    uint32_t id = 0;
+    const bool hasId = takeId(line, id);
+    char name[24];
+    size_t k = strcspn(line, " \t");
+    if (k >= sizeof name) k = sizeof name - 1;
+    memcpy(name, line, k); name[k] = 0;
+    if (hasId) {
+        for (uint8_t i = 0; i < nSeen; i++)
+            if (seen[i] == id) {
+                ev('W', "cmd_dup", ",\"id\":%lu,\"cmd\":\"%s\"", (unsigned long)id, safe(name, name, sizeof name));
+                return nullptr;
+            }
+        seen[next] = id; next = (next + 1) % 8; if (nSeen < 8) nSeen++;
+    }
+    ev('I', "cmd_rx", ",\"id\":%lu,\"cmd\":\"%s\",\"src\":\"mqtt\"", (unsigned long)id, safe(name, name, sizeof name));
+    return line;
+}
+
 // ------------------------------------------------------------------ arguments
 struct Args {
     static constexpr uint8_t MAX = 14;
@@ -200,9 +240,11 @@ inline void printStats(const afec::Stats& s) {
 #if AFEC_LOG_SINK & AFEC_SINK_MQTT
     // Check `pub` against the number of messages the broker side received for this node.
     const logsink::Mqtt& m = logsink::mq();
-    ev('I', "log_stats", ",\"sink\":\"%s\",\"enq\":%lu,\"dropped\":%lu,\"pub\":%lu,\"retries\":%lu,\"conns\":%lu,\"connected\":%u",
+    ev('I', "log_stats", ",\"sink\":\"%s\",\"enq\":%lu,\"dropped\":%lu,\"pub\":%lu,\"retries\":%lu,\"conns\":%lu,\"connected\":%u,"
+       "\"cmd_rx\":%lu,\"cmd_lost\":%lu",
        logsink::name(), (unsigned long)m.enq, (unsigned long)m.dropped, (unsigned long)m.pub,
-       (unsigned long)m.retries, (unsigned long)m.conns, (unsigned)m.connected);
+       (unsigned long)m.retries, (unsigned long)m.conns, (unsigned)m.connected,
+       (unsigned long)m.cmdRx, (unsigned long)m.cmdLost);
 #endif
 }
 

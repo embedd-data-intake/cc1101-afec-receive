@@ -71,7 +71,7 @@ This section applies to the serial sink (`AFEC_LOG_SINK=1`, the default).
 
 ## Log sink (serial / MQTT / off)
 
-Same as the sender, through the identical `src/afec_log_sink.h`: `-D AFEC_LOG_SINK=0|1|2|3` (off, serial, MQTT, both), `env:dev-mqtt` for MQTT, credentials in the gitignored `src/secrets.h`. The receiver publishes to **`afec/<run_id>/rx/log`**. See "Log sink" in `cc1101-afec-sender/docs/firmware.md` for the details (core 0 publisher, `log_drop`, `log_stats`, footprint).
+Same as the sender, through the identical `src/afec_log_sink.h`: `-D AFEC_LOG_SINK=0|1|2|3` (off, serial, MQTT, both), `env:dev-mqtt` for MQTT, credentials in the gitignored `src/secrets.h`. The receiver publishes to **`afec/<run_id>/rx/log`** and takes commands from **`afec/cmd/rx`** as well as serial. It logs `boot` (reset reason) once per boot, and `cmd_rx` / `cmd_dup` for MQTT commands. See "Log sink" and "Firmware events" in `cc1101-afec-sender/docs/firmware.md` for the details (core 0 publisher, `log_drop`, `log_stats`, command ids, footprint).
 
 ## Build, flash, capture
 

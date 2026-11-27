@@ -14,7 +14,12 @@
 // counted, never waited for; a `log_drop` event reports the count once space frees up. `t` is
 // millis() at the time of logging, so publish delay does not move timestamps.
 //
-// <run_id> is the `run=` of the last `mark` ("boot" until then). Commands still arrive over serial.
+// <run_id> is the `run=` of the last `mark` ("boot" until then).
+//
+// Commands: always over serial. MQTT builds also take them from afec/cmd/<tx|rx> (QoS 1), unless
+// built with -D AFEC_MQTT_COMMANDS=0. The esp-mqtt task copies each message into a small queue;
+// loop() takes it out with popCommand() and runs it through the same handler as a serial line
+// (afec_cmd.h: cmd::pollRemote, which also drops QoS 1 redeliveries by their `id=`).
 // WiFi and broker settings come from src/secrets.h (gitignored; copy secrets.example.h).
 #include <Arduino.h>
 
@@ -45,11 +50,18 @@
 #ifndef AFEC_MQTT_QOS
 #define AFEC_MQTT_QOS 1
 #endif
+#ifndef AFEC_MQTT_COMMANDS
+#define AFEC_MQTT_COMMANDS 1            // also accept commands on afec/cmd/<tx|rx>
+#endif
+#else
+#define AFEC_MQTT_COMMANDS 0
 #endif
 
 namespace logsink {
 
 constexpr bool enabled() { return AFEC_LOG_SINK != 0; }
+
+constexpr size_t CMD_MAX = 192;        // same as the serial LineReader
 
 inline const char* name() {
     switch (AFEC_LOG_SINK) {
@@ -72,12 +84,29 @@ struct Mqtt {
     // Written by one side each, read by both; 32-bit aligned stores are atomic on the ESP32.
     volatile uint32_t enq = 0, dropped = 0;           // producer
     volatile uint32_t pub = 0, retries = 0, conns = 0; // consumer
+    QueueHandle_t cmdq = nullptr;                      // command lines from afec/cmd/<role>
+    char cmdTopic[24] = "";
+    volatile uint32_t cmdRx = 0, cmdLost = 0;          // esp-mqtt task: queued / too long or queue full
 };
 inline Mqtt& mq() { static Mqtt m; return m; }
 
-inline void mqttEvent(void*, esp_event_base_t, int32_t id, void*) {
-    if (id == MQTT_EVENT_CONNECTED)    { mq().connected = true; mq().conns++; }
-    if (id == MQTT_EVENT_DISCONNECTED) { mq().connected = false; }
+// Runs in the esp-mqtt task (not pinned). Only flags and a queue copy here, never the handler.
+inline void mqttEvent(void*, esp_event_base_t, int32_t id, void* data) {
+    Mqtt& m = mq();
+    if (id == MQTT_EVENT_CONNECTED) {
+        m.connected = true; m.conns++;
+        if (m.cmdq) esp_mqtt_client_subscribe(m.cli, m.cmdTopic, 1);   // clean session: every connect
+    }
+    if (id == MQTT_EVENT_DISCONNECTED) { m.connected = false; }
+    if (id == MQTT_EVENT_DATA && m.cmdq) {
+        const esp_mqtt_event_handle_t e = (esp_mqtt_event_handle_t)data;
+        if (e->topic_len != (int)strlen(m.cmdTopic) || memcmp(e->topic, m.cmdTopic, e->topic_len)) return;
+        if (e->current_data_offset != 0 || e->total_data_len >= (int)CMD_MAX) { m.cmdLost++; return; }
+        char line[CMD_MAX];
+        memcpy(line, e->data, e->data_len);
+        line[e->data_len] = 0;
+        if (xQueueSend(m.cmdq, line, 0) == pdTRUE) m.cmdRx++; else m.cmdLost++;
+    }
 }
 
 // Item layout in the ring: "<run_id>\0<line without the trailing newline>".
@@ -119,6 +148,10 @@ inline void mqttBegin(uint8_t nodeId, const char* role) {
     m.node = nodeId; m.role = role;
     snprintf(m.clientId, sizeof m.clientId, "afec-node%u", (unsigned)nodeId);
     m.ring = xRingbufferCreate(AFEC_MQTT_RING_BYTES, RINGBUF_TYPE_NOSPLIT);
+#if AFEC_MQTT_COMMANDS
+    snprintf(m.cmdTopic, sizeof m.cmdTopic, "afec/cmd/%s", role);
+    m.cmdq = xQueueCreate(8, CMD_MAX);
+#endif
 
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
@@ -168,6 +201,16 @@ inline void write(const char* line, size_t n) {
 #if AFEC_LOG_SINK & AFEC_SINK_MQTT
     mqttWrite(line, n);
 #endif
+}
+
+// Next command line received over MQTT (NUL-terminated, valid until the next call), or nullptr.
+// Call from loop() only.
+inline char* popCommand() {
+#if AFEC_MQTT_COMMANDS
+    static char line[CMD_MAX];
+    if (mq().cmdq && xQueueReceive(mq().cmdq, line, 0) == pdTRUE) return line;
+#endif
+    return nullptr;
 }
 
 // From `mark run=<id>`: lines logged from now on go to afec/<id>/<role>/log.
