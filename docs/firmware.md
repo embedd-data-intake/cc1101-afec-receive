@@ -6,11 +6,13 @@ This describes the firmware after the serial command layer was added (run plan P
 
 | File | Role |
 | --- | --- |
-| `platformio.ini` | `env:esp32dev` pulls the library from GitHub (unpinned). `env:dev` builds against `../cc1101-afec` through a symlink. Both build with `-D AFEC_LOG_LEVEL=4 -D AFEC_LOG_FORMAT=1`. No sensor libraries. |
+| `platformio.ini` | `env:esp32dev` pulls the library from GitHub (unpinned). `env:dev` builds against `../cc1101-afec` through a symlink. Both build with `-D AFEC_LOG_LEVEL=4 -D AFEC_LOG_FORMAT=1 -D AFEC_LOG_SINK=1` (serial). `env:dev-mqtt` is `dev` with `AFEC_LOG_SINK=2`. No sensor libraries. |
 | `src/config.h` | Pins, node IDs, boot radio settings |
 | `src/main.cpp` | `setup()`, the `onData` payload check, the command handlers; `loop()` polls the node and the serial line |
 | `src/afec_cmd.h` | Command layer, synthetic payload and CRC32. **Identical copy in the sender**, where `docs/firmware.md` documents it in full. |
 | `src/afec_platform_arduino.h` | `afec::Platform` glue. Identical copy in the sender. |
+| `src/afec_log_sink.h` | Log sink: serial, MQTT or off (`AFEC_LOG_SINK`). Identical copy in the sender. |
+| `src/secrets.example.h` | Template for the gitignored `src/secrets.h` (WiFi + broker), only for MQTT builds |
 
 ## Configuration
 
@@ -59,10 +61,17 @@ There is no `run`, `stop` or `bench` here.
 
 ## Serial output
 
+This section applies to the serial sink (`AFEC_LOG_SINK=1`, the default).
+
+
 - **Serial TX buffer: 8 KB** (`Serial.setTxBufferSize(8192)` before `begin()`). With the default buffer every log line blocked ~15 ms on the UART, which inflated RTT unevenly across configurations (2026-11-27 hardware test: C5 109 ms vs C2 53 ms; with the buffer 37 vs 34 ms, the gap being the ACK airtime). DBG logging averages about 1 KB/s, well under the UART's 11.5 KB/s.
 - JSON Lines from the library and the firmware. Filter on lines starting with `{`. The library schema is in `cc1101-afec/docs/afec_log_schema.md`.
 - Plain text: the boot lines only. (The hex/ASCII payload dump was replaced by `app_rx`.)
 - `debugPrint` uses the same 192 B buffer as the sender. The longest observed library line is 175 chars (`rx`/`lvl_step`).
+
+## Log sink (serial / MQTT / off)
+
+Same as the sender, through the identical `src/afec_log_sink.h`: `-D AFEC_LOG_SINK=0|1|2|3` (off, serial, MQTT, both), `env:dev-mqtt` for MQTT, credentials in the gitignored `src/secrets.h`. The receiver publishes to **`afec/<run_id>/rx/log`**. See "Log sink" in `cc1101-afec-sender/docs/firmware.md` for the details (core 0 publisher, `log_drop`, `log_stats`, footprint).
 
 ## Build, flash, capture
 

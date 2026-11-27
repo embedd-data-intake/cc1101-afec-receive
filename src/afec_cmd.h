@@ -11,21 +11,28 @@
 #include <stdlib.h>
 #include <string.h>
 #include <afec_node.h>
+#include "afec_log_sink.h"
 
 namespace cmd {
 
 inline uint8_t& nodeId() { static uint8_t id = 0; return id; }
 
-// One JSON line. `fields` starts with a comma, e.g. ",\"x\":%u". Values must not need escaping.
+// One JSON line to the log sink. `fields` starts with a comma, e.g. ",\"x\":%u". Values must not
+// need escaping. A no-op when the sink is off (AFEC_LOG_SINK=0).
 inline void ev(char lv, const char* name, const char* fields = "", ...) {
+    if (!logsink::enabled()) return;
     char body[256];
     va_list ap;
     va_start(ap, fields);
     int n = vsnprintf(body, sizeof body, fields, ap);
     va_end(ap);
     if (n < 0) body[0] = 0;
-    Serial.printf("{\"t\":%lu,\"node\":%u,\"lv\":\"%c\",\"ev\":\"%s\"%s}\n",
-                  (unsigned long)millis(), (unsigned)nodeId(), lv, name, body);
+    char line[320];
+    n = snprintf(line, sizeof line, "{\"t\":%lu,\"node\":%u,\"lv\":\"%c\",\"ev\":\"%s\"%s}\n",
+                 (unsigned long)millis(), (unsigned)nodeId(), lv, name, body);
+    if (n < 0) return;
+    if (n >= (int)sizeof line) { line[sizeof line - 2] = '\n'; n = sizeof line - 1; }
+    logsink::write(line, (size_t)n);
 }
 
 // Copy user text into a JSON-safe string (no quotes, backslashes or control chars).
@@ -190,6 +197,13 @@ inline void printStats(const afec::Stats& s) {
        (unsigned long)s.rxEccFail, (unsigned long)s.rxCrcFail, (unsigned long)s.acksTx, (unsigned long)s.nacksTx,
        (unsigned long)s.relayed, (unsigned long)s.relayDropped, (unsigned long)s.dutyBlocked,
        (unsigned long)s.eccCorrected);
+#if AFEC_LOG_SINK & AFEC_SINK_MQTT
+    // Check `pub` against the number of messages the broker side received for this node.
+    const logsink::Mqtt& m = logsink::mq();
+    ev('I', "log_stats", ",\"sink\":\"%s\",\"enq\":%lu,\"dropped\":%lu,\"pub\":%lu,\"retries\":%lu,\"conns\":%lu,\"connected\":%u",
+       logsink::name(), (unsigned long)m.enq, (unsigned long)m.dropped, (unsigned long)m.pub,
+       (unsigned long)m.retries, (unsigned long)m.conns, (unsigned)m.connected);
+#endif
 }
 
 // mark run=<id> block=<n> cfg=<Cx>: a block marker for splitting the logs. Returns the block id.
@@ -200,8 +214,10 @@ inline bool mark(const Args& a, uint16_t& block) {
     uint16_t b = 0;
     if (!a.num("block", 0, 65535, b)) return false;
     char run[40], cfg[12];
+    safe(a.get("run"), run, sizeof run);
+    logsink::setRun(run);                        // the mark itself already goes to the new run's topic
     ev('I', "mark", ",\"run\":\"%s\",\"block\":%u,\"cfg\":\"%s\"",
-       safe(a.get("run"), run, sizeof run), b, safe(a.get("cfg"), cfg, sizeof cfg));
+       run, b, safe(a.get("cfg"), cfg, sizeof cfg));
     block = b;
     return true;
 }
