@@ -18,13 +18,13 @@ static constexpr int8_t PIN_CSN  = 27;
 static constexpr int8_t PIN_GDO0 = 26;
 static constexpr int8_t PIN_GDO2 = 16;
 
-static constexpr int8_t NODE_ID = 1;
+static constexpr int8_t NODE_ID      = 1;
+static constexpr int8_t PEER_NODE_ID = 2;   // the sender; default target of `reset`
 
 static constexpr double   RF_FREQ_MHZ   = 433.92;
 static constexpr uint16_t RF_SYNC_WORD  = 0x6B1D;
 static constexpr int8_t   RF_TX_DBM     = 0;
 
 static constexpr bool     USE_IRQ        = true;
-static constexpr uint32_t TX_INTERVAL_MS = 2000;
 
 #define DEBUG

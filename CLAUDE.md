@@ -1,15 +1,16 @@
 # CLAUDE.md
 
-This is the receiver firmware (node 1) for the AFEC thesis. It runs on ESP32 + CC1101, listens through `afec::Node::poll()`, which ACKs or NACKs and relays, and prints delivered payloads. It is a submodule of the thesis repo `afec`. Read `docs/firmware.md` first. For protocol internals and the log schema, see `../cc1101-afec/docs/`.
+This is the receiver firmware (node 1) for the AFEC thesis. It runs on ESP32 + CC1101, listens through `afec::Node::poll()`, which ACKs or NACKs and relays, checks each delivered payload (`app_rx`) and takes serial commands to switch the configuration at run time. It is a submodule of the thesis repo `afec`. Read `docs/firmware.md` first. For protocol internals and the log schema, see `../cc1101-afec/docs/`.
 
 ## Status: frozen
 
-The firmware is considered finished. **Do not refactor or add tests.** Only change it for a real bug found during measurement, or for something the user asks for. The planned serial command layer and the CRC32 `app_rx` check (`../docs/07-run-plan.md`, P0) are one such request, once approved.
+The firmware is considered finished. **Do not refactor or add tests.** Only change it for a real bug found during measurement, or for something the user asks for. The serial command layer and the CRC32 `app_rx` check (`../docs/07-run-plan.md`, P0.1) were added on 2026-11-27 at the user's request.
 
 ## Layout
 
-- `src/config.h`: pins, `NODE_ID` 1, radio settings. `TX_INTERVAL_MS` is unused here.
-- `src/main.cpp`: setup, an `onData` callback that prints hex and ASCII, and a loop that only polls. `NodeConfig` uses the library defaults (mode C5).
+- `src/config.h`: pins, `NODE_ID` 1, `PEER_NODE_ID` 2, boot radio settings.
+- `src/main.cpp`: setup, an `onData` callback that checks the synthetic payload's CRC32 and logs `app_rx`, and command handlers (`hello`, `cfg`, `mark`, `reset`, `stats`). Boots in C5 (library defaults).
+- `src/afec_cmd.h`: command layer. Keep it identical to the sender's copy, which documents it.
 - `src/afec_platform_arduino.h`: `afec::Platform` glue. Keep it identical to the sender's copy.
 - `platformio.ini`: `esp32dev` uses the GitHub library; `dev` uses the `../cc1101-afec` symlink. Both use `AFEC_LOG_LEVEL=4` and `AFEC_LOG_FORMAT=1`, which the log parser needs.
 
